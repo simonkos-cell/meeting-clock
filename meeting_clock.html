@@ -10,11 +10,11 @@
 Purpose: Wall display for an iPad. Large clock, today's meetings (7am to 5pm),
          countdown to the next meeting, chime at 10 min, alarm at 2 min,
          red overrun state when the current meeting runs past its end.
-Inputs:  Events via URL hash (#e=<URL-encoded JSON array of {s,e,t}>), or
+Inputs:  Events via URL hash (#l=<URL-encoded lines 'HH:MM HH:MM title'>, or #e=JSON), or
          pasted into the built-in editor (saved on device). Sample events if neither.
 Outputs: On-screen display only. No network calls, no data leaves the device.
 Author:  Kosali Simon
-Date:    2026-08-22 (v2: audio files replace generated tones)
+Date:    2026-08-22 (v3: #l= line format from Shortcuts, saved on device)
 -->
 <style>
   :root{
@@ -133,8 +133,13 @@ Date:    2026-08-22 (v2: audio files replace generated tones)
 
   function load(){
     var h=location.hash;
+    if(h.indexOf("#l=")===0){
+      try{events=parseLines(decodeURIComponent(h.slice(3)));source="From calendar";
+          try{localStorage.setItem("mc_events",JSON.stringify(events))}catch(err){}return}catch(err){}
+    }
     if(h.indexOf("#e=")===0){
-      try{events=JSON.parse(decodeURIComponent(h.slice(3)));source="From calendar";return}catch(err){}
+      try{events=JSON.parse(decodeURIComponent(h.slice(3)));source="From calendar";
+          try{localStorage.setItem("mc_events",JSON.stringify(events))}catch(err){}return}catch(err){}
     }
     try{var st=localStorage.getItem("mc_events");if(st){events=JSON.parse(st);source="Saved on device";return}}catch(err){}
     events=SAMPLE.slice();source="Sample events";
