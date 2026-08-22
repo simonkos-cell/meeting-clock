@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Meeting clock</title>
+<!--
+Purpose: Wall display for an iPad. Large clock, today's meetings (7am to 5pm),
+         countdown to the next meeting, chime at 10 min, alarm at 2 min,
+         red overrun state when the current meeting runs past its end.
+Inputs:  Events via URL hash (#e=<URL-encoded JSON array of {s,e,t}>), or
+         pasted into the built-in editor (saved on device). Sample events if neither.
+Outputs: On-screen display only. No network calls, no data leaves the device.
+Author:  Kosali Simon
+Date:    2026-08-21
+-->
+<style>
+  :root{
+    --ink:#F4F2EC; --ink-dim:#9A978F; --ink-faint:#5A5853;
+    --bg:#121311; --panel:#1C1D1A; --line:#2B2C29;
+    --now:#8C82E8; --now-bg:#231F45;
+    --next:#5DCAA5; --next-bg:#0F2A22;
+    --late:#F06A5E; --late-bg:#3A1511;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
+    -webkit-user-select:none;user-select:none;overflow:hidden}
+  body{display:grid;grid-template-rows:auto 1fr auto;height:100vh;height:100dvh;padding:3vh 4vw}
+
+  #clock{text-align:center;line-height:.95}
+  #date{font-size:3.2vh;color:var(--ink-dim);letter-spacing:.02em;margin-bottom:.5vh}
+  #time{font-size:17vh;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.04em}
+  #ampm{font-size:6vh;font-weight:500;color:var(--ink-dim);margin-left:1.5vw;vertical-align:baseline}
+
+  #agenda{margin:2.5vh 0 0;border-top:1px solid var(--line);padding-top:1.5vh;overflow:hidden;display:flex;flex-direction:column}
+  #agenda-label{font-size:2.2vh;color:var(--ink-faint);margin-bottom:1vh;display:flex;justify-content:space-between}
+  #events{display:flex;flex-direction:column;gap:.6vh;flex:1;overflow:hidden}
+  .ev{display:flex;align-items:center;gap:2vw;padding:.8vh 1.5vw;border-radius:10px;font-size:2.9vh;line-height:1.15;min-height:4.6vh}
+  .ev .t{width:19vw;font-variant-numeric:tabular-nums;color:var(--ink-dim);flex:none;white-space:nowrap}
+  .ev .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .tag{font-size:2.2vh;color:var(--ink-dim);flex:none}
+  .ev.past{color:var(--ink-faint)} .ev.past .t{color:var(--ink-faint)}
+  .ev.now{background:var(--now-bg);color:var(--ink);border-left:.9vw solid var(--now);border-radius:0 10px 10px 0} .ev.now .t{color:var(--now)}
+  .ev.next{background:var(--next-bg);color:var(--ink)} .ev.next .t{color:var(--next)}
+  .ev.late{background:var(--late-bg);border-left-color:var(--late)} .ev.late .t{color:var(--late)}
+  #empty{color:var(--ink-faint);font-size:3vh;padding:2vh 0}
+
+  #count{margin-top:2vh;border-radius:16px;padding:2vh 3vw;background:var(--panel);border:1px solid var(--line)}
+  #count.next{background:var(--next-bg);border-color:var(--next)}
+  #count.soon{background:var(--next-bg);border-color:var(--next)}
+  #count.late{background:var(--late-bg);border-color:var(--late)}
+  #count-label{font-size:2.6vh;color:var(--ink-dim)}
+  #count.next #count-label,#count.soon #count-label{color:var(--next)}
+  #count.late #count-label{color:var(--late)}
+  #count-row{display:flex;align-items:baseline;gap:2vw;line-height:1;margin:.8vh 0 1.2vh}
+  #count-num{font-size:8vh;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+  #count.late #count-num{color:var(--late)}
+  #count-sub{font-size:2.6vh;color:var(--ink-dim)}
+  #bar{height:1.2vh;border-radius:6px;background:var(--line);overflow:hidden}
+  #fill{height:100%;width:0;background:var(--next);transition:width 1s linear}
+  #count.late #fill{background:var(--late)}
+  #foot{display:flex;justify-content:space-between;align-items:center;margin-top:1.2vh;font-size:2.2vh;color:var(--ink-dim)}
+  #foot button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--ink-faint);border-radius:8px;padding:.6vh 1.5vw}
+  #foot button.on{border-color:var(--next);color:var(--next)}
+  .blink{animation:blink 1s steps(2,start) infinite}
+  @keyframes blink{to{visibility:hidden}}
+
+  #editor{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;padding:4vh 4vw;flex-direction:column;gap:1.5vh}
+  #editor.open{display:flex}
+  #editor textarea{flex:1;font:2.4vh/1.4 ui-monospace,Menlo,monospace;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:1.5vh 2vw;-webkit-user-select:text;user-select:text}
+  #editor p{font-size:2.4vh;color:var(--ink-dim)}
+  #editor .row{display:flex;gap:2vw}
+  #editor button{font:inherit;font-size:2.8vh;color:var(--ink);background:var(--panel);border:1px solid var(--ink-faint);border-radius:10px;padding:1.2vh 3vw}
+  @media (prefers-reduced-motion:reduce){.blink{animation:none}#fill{transition:none}}
+</style>
+</head>
+<body>
+
+<div id="clock">
+  <div id="date"></div>
+  <div><span id="time"></span><span id="ampm"></span></div>
+</div>
+
+<div id="agenda">
+  <div id="agenda-label"><span>Today, 7 am to 5 pm</span><span id="src"></span></div>
+  <div id="events"></div>
+</div>
+
+<div id="count">
+  <div id="count-label"></div>
+  <div id="count-row"><span id="count-num"></span><span id="count-sub"></span></div>
+  <div id="bar"><div id="fill"></div></div>
+  <div id="foot">
+    <span id="alarm-note">Chime at 10 min, alarm at 2 min</span>
+    <span>
+      <button id="sound">Enable sound</button>
+      <button id="edit">Edit events</button>
+    </span>
+  </div>
+</div>
+
+<div id="editor">
+  <p>One meeting per line: start, end, title. 24-hour times. Example: 14:00 15:00 Coauthor call</p>
+  <textarea id="ta" spellcheck="false"></textarea>
+  <div class="row"><button id="save">Save</button><button id="cancel">Cancel</button><button id="clear">Use sample events</button></div>
+</div>
+
+<script>
+(function(){
+  var DAY_START=7, DAY_END=17, CHIME_MIN=10, ALARM_MIN=2;
+  var SAMPLE=[{s:"09:00",e:"09:30",t:"Team check-in"},{s:"11:00",e:"12:00",t:"Board meeting"},
+              {s:"14:00",e:"15:00",t:"Coauthor call"},{s:"15:00",e:"16:00",t:"Working group"},{s:"16:30",e:"17:00",t:"Student meeting"}];
+  var events=[], source="", soundOn=false, fired={}, audioCtx=null;
+
+  function pad(n){return (n<10?"0":"")+n}
+  function hm(d){var h=d.getHours(),m=d.getMinutes();var ap=h>=12?"PM":"AM";h=h%12;if(h===0)h=12;return [h+":"+pad(m),ap]}
+  function short(s){var p=s.split(":"),h=+p[0],m=+p[1];var ap=h>=12?"pm":"am";h=h%12||12;return h+":"+pad(m)+" "+ap}
+  function mins(s){var p=s.split(":");return (+p[0])*60+(+p[1])}
+  function mmss(sec){sec=Math.max(0,Math.round(sec));var m=Math.floor(sec/60),s=sec%60;return m+":"+pad(s)}
+
+  function parseLines(txt){
+    var out=[];txt.split(/\r?\n/).forEach(function(l){
+      var m=l.trim().match(/^(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(.+)$/);
+      if(m)out.push({s:m[1].length===4?"0"+m[1]:m[1],e:m[2].length===4?"0"+m[2]:m[2],t:m[3]});
+    });return out;
+  }
+  function toLines(ev){return ev.map(function(x){return x.s+" "+x.e+" "+x.t}).join("\n")}
+
+  function load(){
+    var h=location.hash;
+    if(h.indexOf("#e=")===0){
+      try{events=JSON.parse(decodeURIComponent(h.slice(3)));source="From calendar";return}catch(err){}
+    }
+    try{var st=localStorage.getItem("mc_events");if(st){events=JSON.parse(st);source="Saved on device";return}}catch(err){}
+    events=SAMPLE.slice();source="Sample events";
+  }
+  function normalize(){
+    events=events.filter(function(x){return x&&x.s&&x.e&&x.t}).sort(function(a,b){return mins(a.s)-mins(b.s)});
+  }
+
+  function beep(freq,dur,vol){
+    if(!audioCtx)return;var o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.type="sine";o.frequency.value=freq;g.gain.value=vol||0.3;o.connect(g);g.connect(audioCtx.destination);
+    o.start();g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+dur);o.stop(audioCtx.currentTime+dur);
+  }
+  function chime(){beep(880,0.6);setTimeout(function(){beep(1175,0.9)},350)}
+  function alarm(){var i=0;(function rep(){if(i++>=6)return;beep(1046,0.25,0.5);setTimeout(function(){beep(784,0.25,0.5)},300);setTimeout(rep,700)})()}
+
+  function render(){
+    var now=new Date(), nowMin=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
+    var t=hm(now);
+    document.getElementById("time").textContent=t[0];
+    document.getElementById("ampm").textContent=t[1];
+    document.getElementById("date").textContent=now.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+    document.getElementById("src").textContent=source;
+
+    var current=null,next=null;
+    events.forEach(function(x){
+      var s=mins(x.s),e=mins(x.e);
+      if(s<=nowMin&&nowMin<e&&!current)current=x;
+      else if(s>nowMin&&!next)next=x;
+    });
+    if(current&&nowMin>=mins(current.e))current=null;
+
+    var box=document.getElementById("events");box.innerHTML="";
+    var shown=events.filter(function(x){return mins(x.e)>DAY_START*60&&mins(x.s)<DAY_END*60});
+    if(!shown.length){box.innerHTML='<div id="empty">No meetings today between 7 am and 5 pm.</div>'}
+    shown.forEach(function(x){
+      var d=document.createElement("div");d.className="ev";var tag="";
+      if(x===current){d.className+=" now";tag="now"}
+      else if(x===next){d.className+=" next";tag="next"}
+      else if(mins(x.e)<=nowMin){d.className+=" past";tag="done"}
+      d.innerHTML='<span class="t">'+short(x.s)+'</span><span class="n"></span><span class="tag">'+tag+'</span>';
+      d.querySelector(".n").textContent=x.t;box.appendChild(d);
+    });
+
+    var c=document.getElementById("count"),lab=document.getElementById("count-label"),
+        num=document.getElementById("count-num"),sub=document.getElementById("count-sub"),fill=document.getElementById("fill");
+    c.className="";num.className="";
+    if(current){
+      var left=(mins(current.e)-nowMin)*60;
+      var total=(mins(current.e)-mins(current.s))*60;
+      var nextTxt=next?" Next: "+next.t+" at "+short(next.s)+".":"";
+      if(left<=0){
+        c.className="late";num.className="blink";
+        lab.textContent="Over time: "+current.t+" ended at "+short(current.e)+"."+nextTxt;
+        num.textContent="+"+mmss(-left);sub.textContent="past end";fill.style.width="100%";
+        fireOnce("late_"+current.s,alarm);
+      }else{
+        lab.textContent="In: "+current.t+" until "+short(current.e)+"."+nextTxt;
+        num.textContent=mmss(left);sub.textContent="left in this meeting";
+        fill.style.width=Math.round(100*(1-left/total))+"%";
+        if(left<=CHIME_MIN*60){c.className="soon";fireOnce("chime_end_"+current.s,chime)}
+        if(left<=ALARM_MIN*60){fireOnce("alarm_end_"+current.s,alarm)}
+      }
+    }else if(next){
+      var until=(mins(next.s)-nowMin)*60;
+      var prevEnd=0;events.forEach(function(x){if(mins(x.e)<=nowMin)prevEnd=Math.max(prevEnd,mins(x.e))});
+      var span=(mins(next.s)-Math.max(prevEnd,DAY_START*60))*60;
+      c.className="next";
+      lab.textContent="Next: "+next.t+" at "+short(next.s);
+      num.textContent=mmss(until);sub.textContent="until start";
+      fill.style.width=Math.round(100*(1-until/Math.max(span,1)))+"%";
+      if(until<=CHIME_MIN*60){fireOnce("chime_"+next.s,chime)}
+      if(until<=ALARM_MIN*60){c.className="soon";num.className="blink";fireOnce("alarm_"+next.s,alarm)}
+    }else{
+      lab.textContent="No more meetings today";num.textContent="";sub.textContent="";fill.style.width="0%";
+    }
+  }
+  function fireOnce(key,fn){if(fired[key])return;fired[key]=true;if(soundOn)fn()}
+
+  document.getElementById("sound").addEventListener("click",function(){
+    if(!audioCtx){try{audioCtx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}
+    if(audioCtx&&audioCtx.state==="suspended")audioCtx.resume();
+    soundOn=!soundOn;this.textContent=soundOn?"Sound on":"Enable sound";this.className=soundOn?"on":"";
+    if(soundOn)chime();
+  });
+  var ed=document.getElementById("editor"),ta=document.getElementById("ta");
+  document.getElementById("edit").addEventListener("click",function(){ta.value=toLines(events);ed.className="open";ta.focus()});
+  document.getElementById("cancel").addEventListener("click",function(){ed.className=""});
+  document.getElementById("save").addEventListener("click",function(){
+    events=parseLines(ta.value);normalize();source="Saved on device";fired={};
+    try{localStorage.setItem("mc_events",JSON.stringify(events))}catch(e){}
+    history.replaceState(null,"",location.pathname);ed.className="";render();
+  });
+  document.getElementById("clear").addEventListener("click",function(){
+    try{localStorage.removeItem("mc_events")}catch(e){}
+    events=SAMPLE.slice();source="Sample events";fired={};history.replaceState(null,"",location.pathname);ed.className="";render();
+  });
+  window.addEventListener("hashchange",function(){load();normalize();fired={};render()});
+
+  function keepAwake(){if("wakeLock" in navigator){navigator.wakeLock.request("screen").catch(function(){})}}
+  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible")keepAwake()});
+
+  load();normalize();render();keepAwake();
+  setInterval(render,1000);
+  var lastDay=new Date().getDate();
+  setInterval(function(){var d=new Date().getDate();if(d!==lastDay){lastDay=d;fired={}}},60000);
+})();
+</script>
+</body>
+</html>
