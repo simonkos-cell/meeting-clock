@@ -14,7 +14,7 @@ Inputs:  Events via URL hash (#l=<URL-encoded lines 'HH:MM HH:MM title'>, or #e=
          pasted into the built-in editor (saved on device). Sample events if neither.
 Outputs: On-screen display only. No network calls, no data leaves the device.
 Author:  Kosali Simon
-Date:    2026-08-22 (v3: #l= line format from Shortcuts, saved on device)
+Date:    2026-08-22 (v4: tolerant time parsing, 12h and 24h)
 -->
 <style>
   :root{
@@ -123,10 +123,17 @@ Date:    2026-08-22 (v3: #l= line format from Shortcuts, saved on device)
   function mins(s){var p=s.split(":");return (+p[0])*60+(+p[1])}
   function mmss(sec){sec=Math.max(0,Math.round(sec));var m=Math.floor(sec/60),s=sec%60;return m+":"+pad(s)}
 
+  function to24(h,m,ap){h=+h;if(ap){ap=ap.toUpperCase();if(ap==="PM"&&h<12)h+=12;if(ap==="AM"&&h===12)h=0}
+    return (h<10?"0":"")+h+":"+m}
   function parseLines(txt){
     var out=[];txt.split(/\r?\n/).forEach(function(l){
-      var m=l.trim().match(/^(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})\s+(.+)$/);
-      if(m)out.push({s:m[1].length===4?"0"+m[1]:m[1],e:m[2].length===4?"0"+m[2]:m[2],t:m[3]});
+      l=l.trim();if(!l)return;
+      var re=/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM|am|pm)?/g;
+      var a=re.exec(l);if(!a)return;
+      var b=re.exec(l);if(!b)return;
+      var title=l.slice(b.index+b[0].length).replace(/^[\s,\-\u2013]+/,"").replace(/^at\s+/i,"").trim();
+      if(!title)return;
+      out.push({s:to24(a[1],a[2],a[3]),e:to24(b[1],b[2],b[3]),t:title});
     });return out;
   }
   function toLines(ev){return ev.map(function(x){return x.s+" "+x.e+" "+x.t}).join("\n")}
