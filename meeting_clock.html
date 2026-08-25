@@ -14,7 +14,7 @@ Inputs:  Events via URL hash (#l=<URL-encoded lines 'HH:MM HH:MM title'>, or #e=
          pasted into the built-in editor (saved on device). Sample events if neither.
 Outputs: On-screen display only. No network calls, no data leaves the device.
 Author:  Kosali Simon
-Date:    2026-08-22 (v4: tolerant time parsing, 12h and 24h)
+Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
 -->
 <style>
   :root{
@@ -175,17 +175,36 @@ Date:    2026-08-22 (v4: tolerant time parsing, 12h and 24h)
     });
     if(current&&nowMin>=mins(current.e))current=null;
 
-    var box=document.getElementById("events");box.innerHTML="";
-    var shown=events.filter(function(x){return mins(x.e)>DAY_START*60&&mins(x.s)<DAY_END*60});
-    if(!shown.length){box.innerHTML='<div id="empty">No meetings today between 7 am and 5 pm.</div>'}
-    shown.forEach(function(x){
-      var d=document.createElement("div");d.className="ev";var tag="";
-      if(x===current){d.className+=" now";tag="now"}
-      else if(x===next){d.className+=" next";tag="next"}
-      else if(mins(x.e)<=nowMin){d.className+=" past";tag="done"}
-      d.innerHTML='<span class="t">'+short(x.s)+'</span><span class="n"></span><span class="tag">'+tag+'</span>';
-      d.querySelector(".n").textContent=x.t;box.appendChild(d);
-    });
+    var box=document.getElementById("events");
+    var all=events.filter(function(x){return mins(x.e)>DAY_START*60&&mins(x.s)<DAY_END*60});
+    function draw(shown,hidden){
+      box.innerHTML="";
+      if(!all.length){box.innerHTML='<div id="empty">No meetings today between 7 am and 5 pm.</div>';return}
+      if(hidden>0){
+        var hnote=document.createElement("div");hnote.className="ev past";
+        hnote.innerHTML='<span class="t"></span><span class="n">'+hidden+' earlier meeting'+(hidden>1?"s":"")+'</span><span class="tag">done</span>';
+        box.appendChild(hnote);
+      }
+      shown.forEach(function(x){
+        var d=document.createElement("div");d.className="ev";var tag="";
+        if(x===current){d.className+=" now";tag="now"}
+        else if(x===next){d.className+=" next";tag="next"}
+        else if(mins(x.e)<=nowMin){d.className+=" past";tag="done"}
+        d.innerHTML='<span class="t">'+short(x.s)+'</span><span class="n"></span><span class="tag">'+tag+'</span>';
+        d.querySelector(".n").textContent=x.t;box.appendChild(d);
+      });
+    }
+    var shown=all.slice(),hidden=0;
+    draw(shown,hidden);
+    // If the list overflows its space, drop the earliest finished meetings first
+    var guard=0;
+    while(box.scrollHeight>box.clientHeight+2&&shown.length>1&&guard<50){
+      var idx=-1;
+      for(var i=0;i<shown.length;i++){if(mins(shown[i].e)<=nowMin&&shown[i]!==current){idx=i;break}}
+      if(idx<0)break;
+      shown.splice(idx,1);hidden++;guard++;
+      draw(shown,hidden);
+    }
 
     var c=document.getElementById("count"),lab=document.getElementById("count-label"),
         num=document.getElementById("count-num"),sub=document.getElementById("count-sub"),fill=document.getElementById("fill");
