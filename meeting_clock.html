@@ -14,7 +14,7 @@ Inputs:  Events via URL hash (#l=<URL-encoded lines 'HH:MM HH:MM title'>, or #e=
          pasted into the built-in editor (saved on device). Sample events if neither.
 Outputs: On-screen display only. No network calls, no data leaves the device.
 Author:  Kosali Simon
-Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
+Date:    2026-08-22 (v6: extra 30-second alarm before starts and ends)
 -->
 <style>
   :root{
@@ -94,7 +94,7 @@ Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
   <div id="count-row"><span id="count-num"></span><span id="count-sub"></span></div>
   <div id="bar"><div id="fill"></div></div>
   <div id="foot">
-    <span id="alarm-note">Chime at 10 min, alarm at 2 min</span>
+    <span id="alarm-note">Chime 10 min, alarm 2 min and 30 sec</span>
     <span>
       <button id="sound">Enable sound</button>
       <button id="edit">Edit events</button>
@@ -112,7 +112,7 @@ Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
 
 <script>
 (function(){
-  var DAY_START=7, DAY_END=17, CHIME_MIN=10, ALARM_MIN=2;
+  var DAY_START=7, DAY_END=17, CHIME_MIN=10, ALARM_MIN=2, FINAL_SEC=30;
   var SAMPLE=[{s:"09:00",e:"09:30",t:"Team check-in"},{s:"11:00",e:"12:00",t:"Board meeting"},
               {s:"14:00",e:"15:00",t:"Coauthor call"},{s:"15:00",e:"16:00",t:"Working group"},{s:"16:30",e:"17:00",t:"Student meeting"}];
   var events=[], source="", soundOn=false, fired={}, audioCtx=null;
@@ -224,6 +224,7 @@ Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
         fill.style.width=Math.round(100*(1-left/total))+"%";
         if(left<=CHIME_MIN*60){c.className="soon";fireOnce("chime_end_"+current.s,chime)}
         if(left<=ALARM_MIN*60){fireOnce("alarm_end_"+current.s,alarm)}
+        if(left<=FINAL_SEC){num.className="blink";fireOnce("final_end_"+current.s,alarm)}
       }
     }else if(next){
       var until=(mins(next.s)-nowMin)*60;
@@ -235,11 +236,12 @@ Date:    2026-08-22 (v5: past meetings collapse so afternoon stays visible)
       fill.style.width=Math.round(100*(1-until/Math.max(span,1)))+"%";
       if(until<=CHIME_MIN*60){fireOnce("chime_"+next.s,chime)}
       if(until<=ALARM_MIN*60){c.className="soon";num.className="blink";fireOnce("alarm_"+next.s,alarm)}
+      if(until<=FINAL_SEC){fireOnce("final_"+next.s,alarm)}
     }else{
       lab.textContent="No more meetings today";num.textContent="";sub.textContent="";fill.style.width="0%";
     }
   }
-  function fireOnce(key,fn){if(fired[key])return;fired[key]=true;if(soundOn)fn()}
+  function fireOnce(key,fn){if(!soundOn)return;if(fired[key])return;fired[key]=true;fn()}
 
   document.getElementById("sound").addEventListener("click",function(){
     soundOn=!soundOn;this.textContent=soundOn?"Sound on":"Enable sound";this.className=soundOn?"on":"";
